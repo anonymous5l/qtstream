@@ -1,14 +1,19 @@
-## QuickTime Record iOS Device H.264 Stream
+## Quicktime Screen sharing for iOS devices
 
-## deps
+implement `Quicktime` part protocol.
+
+take screen record from iOS devices.
+
+Thank's for [quicktime_video_hack](https://github.com/danielpaulus/quicktime_video_hack) fully document and other implement read that project.
+
+## Deps
 
 * openssl - for libimobiledevice trust device
 * libimobiledevice - find trust device
 * libusb - bulk transfer
 
-## run
+## Run
 
 ```bash
 $: cargo run
 ```
-
