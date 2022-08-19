@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate core;
 
 mod apple;
@@ -10,12 +12,11 @@ mod qt_value;
 use crate::coremedia::sample::{SampleBuffer, MEDIA_TYPE_VIDEO};
 use crate::qt::QuickTime;
 use byteorder::{BigEndian, WriteBytesExt};
-use rusb::Error;
 use rusty_libimobiledevice::error::IdeviceError;
 use rusty_libimobiledevice::idevice;
 use std::fs::File;
 use std::io::Write;
-use std::sync::mpsc::{Receiver, Sender, SyncSender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{mpsc, Arc};
 use std::{io, thread};
 
@@ -96,7 +97,7 @@ fn main() {
         };
     });
 
-    let mut file = File::create("test.h264").expect("file");
+    let mut file = File::create("record.h264").expect("file");
 
     loop {
         let message = rx.recv().expect("read packet from channel");
@@ -110,13 +111,12 @@ fn main() {
             match sample_buffer.format_description() {
                 Some(fd) => {
                     file.write_u32::<BigEndian>(1).expect("write nalu magic");
-                    file.write(fd.pps()).expect("write pps");
+                    file.write(fd.avc1().sps()).expect("write sps");
                     file.write_u32::<BigEndian>(1).expect("write nalu magic");
-                    file.write(fd.sps()).expect("write sps");
+                    file.write(fd.avc1().pps()).expect("write pps");
                 }
                 None => {}
             };
-
             match sample_buffer.sample_data() {
                 Some(buf) => {
                     let mut cur = buf;
@@ -124,7 +124,7 @@ fn main() {
                         let slice_len =
                             u32::from_be_bytes([cur[0], cur[1], cur[2], cur[3]]) as usize;
                         file.write_u32::<BigEndian>(1).expect("write nalu magic");
-                        file.write(&cur[4..slice_len + 4]).expect("write sps");
+                        file.write(&cur[4..slice_len + 4]).expect("write sdat");
                         cur = &cur[slice_len + 4..];
                     }
                 }
@@ -133,7 +133,7 @@ fn main() {
         }
     }
 
-    file.flush().expect("flush file");
+    file.flush().expect("flush");
 
-    t.join().expect("loop thread term")
+    t.join().expect("loop thread term");
 }

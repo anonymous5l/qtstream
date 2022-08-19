@@ -2,7 +2,8 @@ use crate::coremedia::format_desc::FormatDescriptor;
 use crate::coremedia::time::Time;
 use crate::qt_pkt::QTPacket;
 use crate::qt_value::QTValue;
-use std::io::{Error, ErrorKind};
+use std::fmt::{Debug, Formatter};
+use std::io::Error;
 
 pub const MAGIC_AUDIO_STREAM_DESCRIPTION: u32 = 0x61736264;
 pub const MAGIC_FORMAT_DESCRIPTOR: u32 = 0x66647363;
@@ -27,6 +28,23 @@ impl SampleTimingInfo {
             presentation_time_stamp: Time::from_qt_packet(pkt),
             decode_time_stamp: Time::from_qt_packet(pkt),
         }
+    }
+}
+
+impl Debug for SampleTimingInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("sample_timing_info:\n").expect("write");
+        f.write_fmt(format_args!("duration: \n{:?}\n", self.duration))
+            .expect("write");
+        f.write_fmt(format_args!(
+            "presentation_time_stamp: \n{:?}\n",
+            self.presentation_time_stamp
+        ))
+        .expect("write");
+        f.write_fmt(format_args!(
+            "decode_time_stamp: \n{:?}\n",
+            self.decode_time_stamp
+        ))
     }
 }
 
@@ -65,6 +83,10 @@ impl SampleBuffer {
             format_description: None,
             output_presentation_time_stamp: None,
         }
+    }
+
+    pub fn sary(&self) -> &Vec<QTValue> {
+        self.sary.as_ref().expect("take sary")
     }
 
     pub fn sample_data(&self) -> Option<&[u8]> {
@@ -147,7 +169,7 @@ impl SampleBuffer {
                     sample.sary = Some(arr);
                 }
                 FREE => {
-                    // free dont know why
+                    // free box
                 }
                 _ => {
                     println!(
@@ -159,5 +181,50 @@ impl SampleBuffer {
         }
 
         Ok(sample)
+    }
+}
+
+impl Debug for SampleBuffer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SampleBuffer:\n").expect("write");
+        if self.output_presentation_time_stamp.is_some() {
+            f.write_fmt(format_args!(
+                "output_presentation_time_stamp: \n{:?}\n",
+                self.output_presentation_time_stamp().as_ref().unwrap()
+            ))
+            .expect("write");
+        }
+        f.write_fmt(format_args!("num_samples: {}\n", self.num_samples))
+            .expect("write");
+        if self.sample_timing_info_array.is_some() {
+            for timing in self.sample_timing_info_array.as_ref().unwrap() {
+                f.write_fmt(format_args!("sample_timing_info_array:\n {:?}\n", timing))
+                    .expect("write");
+            }
+        }
+        f.write_fmt(format_args!(
+            "sample_data: {}\n",
+            self.sample_data.is_some()
+        ))
+        .expect("write");
+        f.write_fmt(format_args!("sample_sizes: {:?}\n", self.sample_sizes))
+            .expect("write");
+        if self.attachments.is_some() {
+            let mut i = 0;
+            for qtv in self.attachments.as_ref().unwrap() {
+                f.write_fmt(format_args!("attachments.{}:\n{:?}\n", i, qtv))
+                    .expect("write");
+                i += 1;
+            }
+        }
+        if self.sary.is_some() {
+            let mut i = 0;
+            for qtv in self.sary.as_ref().unwrap() {
+                f.write_fmt(format_args!("sary.{}:\n{:?}\n", i, qtv))
+                    .expect("write");
+                i += 1;
+            }
+        }
+        f.write_str("-----")
     }
 }

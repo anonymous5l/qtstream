@@ -1,7 +1,7 @@
 use crate::coremedia::time::Time;
 use std::time::SystemTime;
 
-const NANO_SECOND_SCALE: u32 = 1000000000;
+const NANO_SECOND_SCALE: u32 = 1_000_000_000;
 
 const KCM_TIME_FLAGS_VALID: u32 = 0x0;
 const KCM_TIME_FLAGS_HAS_BEEN_ROUNDED: u32 = 0x1;
@@ -18,6 +18,17 @@ pub struct Clock {
     time_scale: u32,
     factor: f64,
     t: SystemTime,
+}
+
+impl Clone for Clock {
+    fn clone(&self) -> Self {
+        return Clock {
+            id: self.id,
+            time_scale: self.time_scale,
+            factor: self.factor,
+            t: self.t,
+        };
+    }
 }
 
 impl Clock {
@@ -41,9 +52,9 @@ impl Clock {
 
     pub fn calculate_skew(st1: &Time, et1: &Time, st2: &Time, et2: &Time) -> f64 {
         let diff_clock1 = et1.value() - st1.value();
-        let diff_clock2 = et2.value() - et1.value();
+        let diff_clock2 = et2.value() - st2.value();
 
-        let diff_time = Time::new(diff_clock1, st1.scale(), 0, 0);
+        let diff_time = Time::new(diff_clock1, st1.scale(), KCM_TIME_FLAGS_VALID, 0);
         let scaled_diff = diff_time.get_time_for_scale(st2);
 
         (st2.scale() as f64) * scaled_diff / (diff_clock2 as f64)

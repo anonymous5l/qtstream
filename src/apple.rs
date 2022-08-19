@@ -118,13 +118,11 @@ impl AppleDevice {
                             {
                                 self.in_max_packet_size = endpoint_desc.max_packet_size();
                                 self.in_endpoint_address = endpoint_desc.address();
-                                println!("in_max_packet_size {}", self.in_max_packet_size);
                             } else if endpoint_desc.direction() == Direction::Out
                                 && endpoint_desc.transfer_type() == TransferType::Bulk
                             {
                                 self.out_max_packet_size = endpoint_desc.max_packet_size();
                                 self.out_endpoint_address = endpoint_desc.address();
-                                println!("out_max_packet_size {}", self.out_max_packet_size);
                             }
                         }
 

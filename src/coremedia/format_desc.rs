@@ -5,9 +5,107 @@ use crate::coremedia::sample::{
 };
 use crate::qt_pkt::QTPacket;
 use crate::qt_value::QTValue;
+use byteorder::{BigEndian, ReadBytesExt};
 use std::fmt::{Debug, Formatter};
 use std::io;
-use std::io::{Error, ErrorKind};
+use std::io::{Cursor, Error, ErrorKind, Read};
+
+pub struct AVC1 {
+    version: u8,
+    avc_profile: u8,
+    avc_compatibility: u8,
+    avc_level: u8,
+    nalu_len: u8,
+    sps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+}
+
+impl AVC1 {
+    pub fn sps(&self) -> &[u8] {
+        self.sps.as_ref().expect("sps None").as_slice()
+    }
+
+    pub fn pps(&self) -> &[u8] {
+        self.pps.as_ref().expect("pps None").as_slice()
+    }
+
+    fn from_vec(data: &Vec<u8>) -> Result<AVC1, Error> {
+        let mut cur = Cursor::new(data);
+        let version = match cur.read_u8() {
+            Ok(e) => e,
+            Err(e) => return Err(e),
+        };
+        let avc_profile = match cur.read_u8() {
+            Ok(e) => e,
+            Err(e) => return Err(e),
+        };
+        let avc_compatibility = match cur.read_u8() {
+            Ok(e) => e,
+            Err(e) => return Err(e),
+        };
+        let avc_level = match cur.read_u8() {
+            Ok(e) => e,
+            Err(e) => return Err(e),
+        };
+        let nalu_len = match cur.read_u8() {
+            Ok(e) => (e & 0x3) + 1,
+            Err(e) => return Err(e),
+        };
+        let sps_size = match cur.read_u8() {
+            Ok(e) => e & 0x1F,
+            Err(e) => return Err(e),
+        };
+
+        let mut sps: Option<Vec<u8>> = None;
+
+        for _ in 0..sps_size {
+            let sps_len = match cur.read_u16::<BigEndian>() {
+                Ok(e) => e,
+                Err(e) => return Err(e),
+            };
+
+            let mut sps_buffer: Vec<u8> = vec![0; sps_len as usize];
+            match cur.read_exact(&mut sps_buffer) {
+                Err(e) => return Err(e),
+                _ => {}
+            };
+
+            sps = Some(sps_buffer)
+        }
+
+        let mut pps: Option<Vec<u8>> = None;
+
+        let pps_size = match cur.read_u8() {
+            Ok(e) => e & 0x1F,
+            Err(e) => return Err(e),
+        };
+
+        for _ in 0..pps_size {
+            let pps_len = match cur.read_u16::<BigEndian>() {
+                Ok(e) => e,
+                Err(e) => return Err(e),
+            };
+
+            let mut pps_buffer: Vec<u8> = vec![0; pps_len as usize];
+            match cur.read_exact(&mut pps_buffer) {
+                Err(e) => return Err(e),
+                _ => {}
+            };
+
+            pps = Some(pps_buffer)
+        }
+
+        Ok(AVC1 {
+            version,
+            avc_profile,
+            avc_compatibility,
+            avc_level,
+            nalu_len,
+            sps,
+            pps,
+        })
+    }
+}
 
 pub struct FormatDescriptor {
     media_type: u32,
@@ -15,26 +113,30 @@ pub struct FormatDescriptor {
     video_dimension_height: u32,
     codec: u32,
     extensions: Option<Vec<QTValue>>,
-    //PPS contains bytes of the Picture Parameter Set h264 NALu
-    pps: Option<Vec<u8>>,
-    //SPS contains bytes of the Picture Parameter Set h264 NALu
-    sps: Option<Vec<u8>>,
+    avc1: Option<AVC1>,
     audio_stream_basic_description: Option<AudioStreamDescription>,
 }
 
 impl FormatDescriptor {
-    pub fn pps(&self) -> &[u8] {
-        let pps = self.pps.as_ref().expect("pps");
-        pps.as_slice()
+    pub fn video_dimension_width(&self) -> u32 {
+        self.video_dimension_width
     }
 
-    pub fn sps(&self) -> &[u8] {
-        let sps = self.sps.as_ref().expect("pps");
-        sps.as_slice()
+    pub fn video_dimension_height(&self) -> u32 {
+        self.video_dimension_height
     }
 
-    pub fn from_qt_packet(pkt: &mut QTPacket) -> Result<FormatDescriptor, io::Error> {
-        println!("format descriptor");
+    pub fn audio_stream_description(&self) -> &AudioStreamDescription {
+        self.audio_stream_basic_description
+            .as_ref()
+            .expect("audio stream description")
+    }
+
+    pub fn avc1(&self) -> &AVC1 {
+        self.avc1.as_ref().expect("avc1")
+    }
+
+    pub fn from_qt_packet(pkt: &mut QTPacket) -> Result<FormatDescriptor, Error> {
         let (mut mdia_pkt, _) = match QTPacket::from_qt_packet_with_magic(pkt, MAGIC_MEDIA_TYPE) {
             Ok(e) => e,
             Err(e) => return Err(e),
@@ -66,8 +168,7 @@ impl FormatDescriptor {
                     video_dimension_height: 0,
                     codec: 0,
                     extensions: None,
-                    pps: None,
-                    sps: None,
+                    avc1: None,
                     audio_stream_basic_description: Some(asd),
                 })
             }
@@ -107,8 +208,7 @@ impl FormatDescriptor {
 
                 let mut extensions: Vec<QTValue> = Vec::new();
 
-                let mut pps: Option<Vec<u8>> = None;
-                let mut sps: Option<Vec<u8>> = None;
+                let mut avc1: Option<AVC1> = None;
 
                 loop {
                     let extension = match QTValue::from_qt_packet(&mut extension_pkt) {
@@ -118,8 +218,6 @@ impl FormatDescriptor {
                             _ => return Err(e),
                         },
                     };
-
-                    println!("video format descriptor {:?}", extension);
 
                     match extension.as_pair() {
                         Some(kv) => match kv.key().as_idx() {
@@ -132,17 +230,16 @@ impl FormatDescriptor {
                                         let obj_k =
                                             obj_kv.key().as_idx().expect("obj[0].key is not idx");
                                         if obj_k == 105 {
+                                            // AVCC format in iOS 15.6
                                             let obj_data = obj_kv
                                                 .value()
                                                 .as_data()
                                                 .expect("obj[0].value is not data");
 
-                                            let pps_len = obj_data[7] as usize;
-                                            pps = Some(Vec::from(&obj_data[8..8 + pps_len]));
-                                            let sps_len = obj_data[10 + pps_len] as usize;
-                                            sps = Some(Vec::from(
-                                                &obj_data[11 + pps_len..11 + pps_len + sps_len],
-                                            ));
+                                            avc1 = Some(match AVC1::from_vec(obj_data) {
+                                                Ok(e) => e,
+                                                Err(e) => return Err(e),
+                                            });
                                         }
                                     }
                                 }
@@ -162,8 +259,7 @@ impl FormatDescriptor {
                     video_dimension_height: video_height,
                     codec,
                     extensions: Some(extensions),
-                    pps,
-                    sps,
+                    avc1,
                     audio_stream_basic_description: None,
                 })
             }
@@ -260,19 +356,12 @@ impl FormatDescriptor {
                         };
                     }
 
-                    let mut extension_buffer = match extension_pkt.as_bytes() {
+                    let extension_buffer = match extension_pkt.as_bytes() {
                         Err(e) => return Err(e),
                         Ok(e) => e,
                     };
 
-                    let mut extension_buffer_vec = Vec::from(extension_buffer);
-
-                    extension_buffer_vec[0] = 0;
-                    extension_buffer_vec[1] = 0;
-                    extension_buffer_vec[2] = 0;
-                    extension_buffer_vec[3] = 0;
-
-                    match vd_pkt.write(extension_buffer_vec.as_slice()) {
+                    match vd_pkt.write(extension_buffer) {
                         Err(e) => return Err(e),
                         _ => {}
                     };

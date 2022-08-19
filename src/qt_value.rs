@@ -1,7 +1,7 @@
 use crate::coremedia::format_desc::FormatDescriptor;
 use crate::coremedia::sample::MAGIC_FORMAT_DESCRIPTOR;
 use crate::qt_pkt::QTPacket;
-use std::fmt::{format, Debug, Formatter, Write};
+use std::fmt::{Debug, Formatter};
 use std::io::{Error, ErrorKind};
 
 const MAGIC_KEY_VALUE_PAIR: u32 = 0x6B657976; // keyv - vyek
@@ -44,6 +44,18 @@ pub enum QTValue {
     Data(Vec<u8>),
     IdxKey(u16),
     FormatDescriptor(Box<FormatDescriptor>),
+}
+
+impl AsMut<QTValue> for QTValue {
+    fn as_mut(&mut self) -> &mut QTValue {
+        return self;
+    }
+}
+
+impl AsRef<QTValue> for QTValue {
+    fn as_ref(&self) -> &QTValue {
+        return self;
+    }
 }
 
 impl QTValue {
@@ -226,12 +238,7 @@ impl QTValue {
                 let mut arr: Vec<QTValue> = Vec::new();
                 loop {
                     match QTValue::from_qt_packet(&mut obj_pkt) {
-                        Ok(mut e) => {
-                            let mut brow = &mut e;
-                            let mut wrap_pkt = brow.as_qt_packet().expect("as_qt_packet");
-                            let buf = wrap_pkt.as_bytes().expect("as bytes");
-                            arr.push(e)
-                        }
+                        Ok(e) => arr.push(e),
                         Err(e) => match e.kind() {
                             ErrorKind::UnexpectedEof => break,
                             _ => return Err(e),
@@ -261,11 +268,11 @@ impl QTValue {
         match magic {
             MAGIC_KEY_STRING => Ok(QTValue::StringKey(match String::from_utf8(data) {
                 Ok(e) => e,
-                Err(e) => return Err(Error::new(ErrorKind::InvalidData, "string utf8")),
+                Err(_err) => return Err(Error::new(ErrorKind::InvalidData, "string utf8")),
             })),
             MAGIC_KEY_STRING_VALUE => Ok(QTValue::StringKey(match String::from_utf8(data) {
                 Ok(e) => e,
-                Err(e) => return Err(Error::new(ErrorKind::InvalidData, "string utf8")),
+                Err(_err) => return Err(Error::new(ErrorKind::InvalidData, "string utf8")),
             })),
             MAGIC_KEY_BOOLEAN => match data[0] {
                 0 => Ok(QTValue::Boolean(false)),
@@ -322,7 +329,7 @@ impl QTValue {
             QTValue::UInt32(i) => format!("{}UInt32={}", ident, i),
             QTValue::UInt64(i) => format!("{}UInt64={}", ident, i),
             QTValue::IdxKey(i) => format!("{}IdxKey={}", ident, i),
-            QTValue::FormatDescriptor(fd) => format!("{}FormatDescriptor=...", ident),
+            QTValue::FormatDescriptor(_fd) => format!("{}FormatDescriptor=...", ident),
         }
     }
 

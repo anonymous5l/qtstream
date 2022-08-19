@@ -1,5 +1,6 @@
 use crate::qt_pkt::QTPacket;
 use byteorder::{LittleEndian, WriteBytesExt};
+use std::fmt::{Debug, Formatter};
 use std::io::Error;
 
 pub struct Time {
@@ -17,6 +18,15 @@ impl Clone for Time {
             flags: self.flags,
             epoch: self.epoch,
         }
+    }
+}
+
+impl Debug for Time {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "value: {}\nscale: {}\nflags: {}\nepoch: {}\n",
+            self.value, self.scale, self.flags, self.epoch,
+        ))
     }
 }
 

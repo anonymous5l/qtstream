@@ -1,5 +1,5 @@
 use crate::qt_pkt::QTPacket;
-use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, WriteBytesExt};
 use std::io::Error;
 
 pub struct AudioStreamDescription {
@@ -38,6 +38,38 @@ impl AudioStreamDescription {
             bits_per_channel,
             reserved: 0,
         }
+    }
+
+    pub fn sample_rate(&self) -> f64 {
+        self.sample_rate
+    }
+
+    pub fn format_id(&self) -> u32 {
+        self.format_id
+    }
+
+    pub fn format_flags(&self) -> u32 {
+        self.format_flags
+    }
+
+    pub fn bytes_per_packet(&self) -> u32 {
+        self.bytes_per_packet
+    }
+
+    pub fn frames_per_packet(&self) -> u32 {
+        self.frames_per_packet
+    }
+
+    pub fn bytes_per_frame(&self) -> u32 {
+        self.bytes_per_frame
+    }
+
+    pub fn channels_per_frame(&self) -> u32 {
+        self.channels_per_frame
+    }
+
+    pub fn bits_per_channel(&self) -> u32 {
+        self.bits_per_channel
     }
 
     pub fn from_qt_packet(pkt: &mut QTPacket) -> Result<AudioStreamDescription, Error> {

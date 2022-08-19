@@ -3,19 +3,15 @@ use crate::coremedia::clock::Clock;
 use crate::coremedia::sample::{SampleBuffer, MEDIA_TYPE_SOUND, MEDIA_TYPE_VIDEO};
 use crate::coremedia::time::Time;
 use crate::qt_device::{qt_hpa1_device_info, qt_hpd1_device_info};
+use crate::qt_pkt;
 use crate::qt_pkt::{
-    QTPacket, QTPacketAFMT, QTPacketASYN, QTPacketCLOCK, QTPacketPing, QTPacketSKEW, QTPacketSTOP,
-    QTPacketTIME,
+    QTPacket, QTPacketAFMT, QTPacketASYN, QTPacketCLOCK, QTPacketSKEW, QTPacketSTOP, QTPacketTIME,
 };
-use crate::qt_value::{QTKeyValuePair, QTValue};
-use crate::{qt_pkt, qt_value};
 use byteorder::{LittleEndian, ReadBytesExt};
-use std::fs::copy;
-use std::io;
 use std::io::{BufRead, Cursor, Error, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvError, Sender, SyncSender};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 
 pub struct QuickTime {
     device: AppleDevice,
@@ -39,12 +35,15 @@ const HPA0: u32 = 0x68706130;
 const NEED: u32 = 0x6E656564;
 const EMPTY_CF_TYPE: u64 = 1;
 
+impl AsRef<QuickTime> for QuickTime {
+    fn as_ref(&self) -> &QuickTime {
+        self
+    }
+}
+
 impl QuickTime {
     pub fn new(device: AppleDevice, tx: SyncSender<Result<SampleBuffer, Error>>) -> QuickTime {
-        // let (tx, rx): (
-        //     Sender<Result<SampleBuffer, Error>>,
-        //     Receiver<Result<SampleBuffer, Error>>,
-        // ) = mpsc::channel();
+        // let (close_tx, close_rx): (Sender<()>, Receiver<()>) = mpsc::channel();
 
         return QuickTime {
             device,
@@ -59,6 +58,8 @@ impl QuickTime {
             last_eat_frame_received_device_audio_clock: None,
             packet_pool: Cursor::new(Vec::new()),
             tx,
+            // close_tx,
+            // close_rx,
         };
     }
 
@@ -89,7 +90,7 @@ impl QuickTime {
 
     fn read(&mut self) -> Result<Option<QTPacket>, Error> {
         let mut buffer: Vec<u8> = vec![0; self.device.max_read_packet_size() as usize];
-        let mut buffer_size = match self.device.read_bulk(&mut buffer) {
+        let buffer_size = match self.device.read_bulk(&mut buffer) {
             Ok(e) => e,
             Err(e) => {
                 return Err(Error::new(
@@ -281,8 +282,6 @@ impl QuickTime {
                     Err(e) => return Err(e),
                 };
 
-                println!("cvrp payload {:?}", cvrp_pkt.payload());
-
                 self.need_clock_ref = Some(cvrp_pkt.device_clock_ref());
 
                 let mut need_pkt = match QTPacketASYN::new(None, NEED, cvrp_pkt.device_clock_ref())
@@ -371,7 +370,7 @@ impl QuickTime {
                     .as_ref()
                     .expect("last_eat_frame_received_device_audio_clock None");
 
-                let skew = Clock::calculate_skew(stlac, stdac, lefrlac, lefrdac);
+                let skew = Clock::calculate_skew(stlac, lefrlac, stdac, lefrdac);
 
                 let mut pkt = match QTPacketSKEW::new().reply_packet(correlation_id, skew) {
                     Ok(e) => e,
@@ -405,18 +404,17 @@ impl QuickTime {
     fn handle_asyn_pkt(
         &mut self,
         pkt: &mut QTPacket,
-        clock_ref: u64,
+        _clock_ref: u64,
         magic: u32,
     ) -> Result<(), Error> {
         match magic {
             qt_pkt::ASYN_PACKET_MAGIC_EAT => {
-                println!("ASYN_MAGIC_EAT");
                 let sample_buffer = match SampleBuffer::from_qt_packet(pkt, MEDIA_TYPE_SOUND) {
                     Ok(e) => e,
                     Err(e) => return Err(e),
                 };
 
-                if self.start_time_local_audio_clock.is_none() {
+                if self.last_eat_frame_received_device_audio_clock.is_none() {
                     self.start_time_device_audio_clock =
                         sample_buffer.output_presentation_time_stamp();
                     self.start_time_local_audio_clock = Some(
@@ -425,15 +423,20 @@ impl QuickTime {
                             .expect("local audio clock")
                             .get_time(),
                     );
+                    self.last_eat_frame_received_device_audio_clock =
+                        sample_buffer.output_presentation_time_stamp();
+                    self.last_eat_frame_received_local_audio_clock =
+                        self.start_time_local_audio_clock.clone();
+                } else {
+                    self.last_eat_frame_received_device_audio_clock =
+                        sample_buffer.output_presentation_time_stamp();
+                    self.last_eat_frame_received_local_audio_clock = Some(
+                        self.local_audio_clock
+                            .as_ref()
+                            .expect("invalid lac")
+                            .get_time(),
+                    );
                 }
-                self.last_eat_frame_received_device_audio_clock =
-                    sample_buffer.output_presentation_time_stamp();
-                self.last_eat_frame_received_local_audio_clock = Some(
-                    self.local_audio_clock
-                        .as_ref()
-                        .expect("local audio clock")
-                        .get_time(),
-                );
 
                 match self.tx.send(Ok(sample_buffer)) {
                     Err(e) => return Err(Error::new(ErrorKind::BrokenPipe, e.to_string())),
@@ -441,7 +444,6 @@ impl QuickTime {
                 };
             }
             qt_pkt::ASYN_PACKET_MAGIC_FEED => {
-                println!("ASYN_MAGIC_FEED");
                 let sample_buffer = match SampleBuffer::from_qt_packet(pkt, MEDIA_TYPE_VIDEO) {
                     Ok(e) => e,
                     Err(e) => return Err(e),
@@ -468,37 +470,11 @@ impl QuickTime {
                     _ => {}
                 };
             }
-            qt_pkt::ASYN_PACKET_MAGIC_SPRP => {
-                println!("ASYN_MAGIC_SPRP");
-                println!(
-                    "{:?}",
-                    match QTValue::from_qt_packet(pkt) {
-                        Ok(e) => e,
-                        Err(e) => return Err(e),
-                    }
-                );
-            }
-            qt_pkt::ASYN_PACKET_MAGIC_TJMP => {
-                println!("ASYN_MAGIC_TJMP");
-            }
-            qt_pkt::ASYN_PACKET_MAGIC_SRAT => {
-                println!("ASYN_MAGIC_SRAT");
-            }
-            qt_pkt::ASYN_PACKET_MAGIC_TBAS => {
-                println!("ASYN_MAGIC_TBAS");
-            }
-            qt_pkt::ASYN_PACKET_MAGIC_RELS => {
-                println!("ASYN_MAGIC_RELS");
-                let mut off_display = match QTPacketASYN::new(None, HPD0, 1).as_qt_packet() {
-                    Err(e) => return Err(e),
-                    Ok(e) => e,
-                };
-
-                match self.write(&mut off_display) {
-                    Err(e) => return Err(e),
-                    _ => {}
-                };
-            }
+            qt_pkt::ASYN_PACKET_MAGIC_SPRP => {}
+            qt_pkt::ASYN_PACKET_MAGIC_TJMP => {}
+            qt_pkt::ASYN_PACKET_MAGIC_SRAT => {}
+            qt_pkt::ASYN_PACKET_MAGIC_TBAS => {}
+            qt_pkt::ASYN_PACKET_MAGIC_RELS => {}
             _ => {}
         }
         Ok(())
@@ -554,16 +530,13 @@ impl QuickTime {
 
             match magic {
                 qt_pkt::PACKET_MAGIC_PING => {
-                    println!("magic: PACKAGE_MAGIC_PING");
                     pkt.borrow_mut().seek(SeekFrom::Start(0)).expect("seek");
                     self.write(&mut pkt).expect("write ping");
                 }
                 qt_pkt::PACKET_MAGIC_SYNC => {
-                    println!("magic: PACKET_MAGIC_SYNC");
                     self.handle_pkt(&mut pkt, true).expect("sync");
                 }
                 qt_pkt::PACKET_MAGIC_ASYN => {
-                    println!("magic: PACKET_MAGIC_ASYN");
                     self.handle_pkt(&mut pkt, false).expect("asyn");
                 }
                 _ => {
@@ -583,20 +556,21 @@ impl QuickTime {
 impl Drop for QuickTime {
     fn drop(&mut self) {
         self.close_session().expect("close session failed");
-        // match self.device.is_qt_enabled() {
-        //     Ok(enabled) => {
-        //         if enabled {
-        //             match self.device.set_qt_enabled(!enabled) {
-        //                 Err(e) => {
-        //                     println!("set_qt_disabled failed {}", e);
-        //                 }
-        //                 _ => {}
-        //             }
-        //         }
-        //     }
-        //     Err(e) => {
-        //         println!("dispose failed {}", e);
-        //     }
-        // };
+
+        match self.device.is_qt_enabled() {
+            Ok(enabled) => {
+                if enabled {
+                    match self.device.set_qt_enabled(!enabled) {
+                        Err(e) => {
+                            println!("set_qt_disabled failed {}", e);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                println!("dispose failed {}", e);
+            }
+        };
     }
 }

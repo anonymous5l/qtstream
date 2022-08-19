@@ -201,11 +201,8 @@ impl QTPacket {
 
     pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         match self.inner.read_exact(buf) {
-            Ok(e) => Ok(()),
-            Err(e) => {
-                println!("pkt read exact panic");
-                Err(e)
-            }
+            Ok(_size) => Ok(()),
+            Err(e) => return Err(e),
         }
     }
 
@@ -228,9 +225,9 @@ impl Debug for QTPacket {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(
             format!(
-                "pkt_len: {}\npkt_buf: {:#2x?}",
+                "pkt_len: {}\npkt_buf: {}",
                 self.inner.get_ref().len(),
-                self.inner.get_ref().as_slice()
+                hex::encode(self.inner.get_ref().as_slice())
             )
             .as_str(),
         )
